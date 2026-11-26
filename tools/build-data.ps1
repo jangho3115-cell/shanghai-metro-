@@ -42,16 +42,38 @@ foreach ($l in $lines) {
   $segs = @()
   foreach ($rid in $l[4]) {
     $r = $rels[$rid]; if (-not $r) { throw "missing relation $rid" }
-    $seq = @()
+    $seq = New-Object System.Collections.Generic.List[string]
     foreach ($m in ($r.members | Where-Object { $_.type -eq 'node' -and $_.role -match '^stop' })) {
       $n = $nodes[[string]$m.ref]; $nm = ($n.tags.name -replace '・', '·')
       if (-not $pos.ContainsKey($nm)) { $pos[$nm] = @(); $order.Add($nm) }
       $pos[$nm] += , @([double]$n.lat, [double]$n.lon)
-      if ($seq.Count -eq 0 -or $seq[-1] -ne $nm) { $seq += $nm }
+      if ($seq.Count -eq 0 -or $seq[$seq.Count - 1] -ne $nm) { $seq.Add($nm) }
     }
     $segs += , $seq
   }
   $lineOut += , @($l, $segs)
+}
+
+# OpenStreetMap에 빠져 있는 역 보충: 노선 id, 앞 역, 새 역, 뒤 역 (위치는 앞·뒤 역의 중간)
+$extraStops = @(
+  , @('9', '金桥', '金吉路', '金海路')
+)
+foreach ($x in $extraStops) {
+  foreach ($lo in $lineOut) {
+  if ($lo[0][0] -ne $x[0]) { continue }
+  foreach ($seq in $lo[1]) {
+    for ($i = 0; $i -lt $seq.Count - 1; $i++) {
+      $a = $seq[$i]; $b = $seq[$i + 1]
+      if (($a -eq $x[1] -and $b -eq $x[3]) -or ($a -eq $x[3] -and $b -eq $x[1])) {
+        $pa = $pos[$a][0]; $pb = $pos[$b][0]
+        $pos[$x[2]] = @(, @((($pa[0] + $pb[0]) / 2), (($pa[1] + $pb[1]) / 2)))
+        if (-not $order.Contains($x[2])) { $order.Add($x[2]) }
+        $seq.Insert($i + 1, $x[2])
+        break
+      }
+    }
+  }
+  }
 }
 
 $lat0 = 31.2323; $lon0 = 121.4737

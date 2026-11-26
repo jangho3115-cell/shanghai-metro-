@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<!-- 페이지 전체 확대는 막고, 노선도 확대는 2단계에서 직접 구현 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<title>상하이 지하철 노선도</title>
+<style>
+  /* 외부 폰트/CDN 없이 기기 기본 폰트만 사용 */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic",
+                 "Noto Sans KR", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f5f4;
+    color: #1f2937;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* 상단 바 */
+  #topbar {
+    flex: none;
+    padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    background: #1f2937;
+    color: #fff;
+  }
+  #topbar h1 { font-size: 20px; font-weight: 700; }
+
+  /* 노선도 영역 */
+  #map-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #fff;
+    touch-action: none; /* 2단계: 핀치/드래그를 직접 처리 */
+  }
+  #map { width: 100%; height: 100%; display: block; }
+
+  /* 줌 버튼 자리 (2단계에서 동작 연결) */
+  #zoom-controls {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #zoom-controls button {
+    width: 52px;
+    height: 52px;
+    border: 1px solid #d1d5db;
+    border-radius: 12px;
+    background: #fff;
+    font-size: 24px;
+    font-weight: 700;
+    color: #1f2937;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  }
+  #zoom-controls button.small-text { font-size: 15px; }
+
+  /* 하단 노선 범례 */
+  #legend {
+    flex: none;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    background: #fff;
+    border-top: 1px solid #e5e7eb;
+  }
+  .legend-item {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 16px;
+    white-space: nowrap;
+  }
+  .legend-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 역 정보 창 자리 (2단계에서 내용 채움) */
+  #info-sheet {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: #fff;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,.2);
+    padding: 20px 16px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    transform: translateY(100%);
+    transition: transform .25s ease;
+  }
+  #info-sheet.open { transform: translateY(0); }
+
+  /* SVG 노선도 글자 */
+  .st-ko { font-size: 15px; font-weight: 700; fill: #111827; }
+  .st-zh { font-size: 12px; fill: #4b5563; }
+  .st-label text { paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <h1>상하이 지하철 노선도</h1>
+</header>
+
+<main id="map-wrap">
+  <svg id="map" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <g id="viewport">
+      <g id="layer-lines"></g>
+      <g id="layer-stations"></g>
+      <g id="layer-labels"></g>
+    </g>
+  </svg>
+
+  <div id="zoom-controls">
+    <button id="btn-zoom-in" aria-label="확대">+</button>
+    <button id="btn-zoom-out" aria-label="축소">−</button>
+    <button id="btn-zoom-reset" class="small-text" aria-label="전체 보기">전체</button>
+  </div>
+</main>
+
+<nav id="legend"></nav>
+
+<section id="info-sheet" aria-hidden="true"></section>
+
+<script>
+/* =========================================================
+   데이터
+   - LINES: 노선 (id, 이름, 색상, 역 순서)
+   - STATIONS: 역 (한국어, 중국어, 좌표, 이름 위치, 명소)
+     · 지나는 노선은 LINES에서 자동 계산
+     · label: 역 이름을 점의 어느 쪽에 둘지 (right/left/above/below)
+   - 좌표는 실제 지리가 아닌 도식형(직선·45도) 배치
+   ========================================================= */
+
+const LINES = [
+  {
+    id: '1', name: '1호선', color: '#E3002B',
+    stations: ['shanghai_railway', 'hanzhong_rd', 'xinzha_rd', 'peoples_square',
+               'huangpi_rd_s', 'shaanxi_rd_s', 'changshu_rd', 'hengshan_rd', 'xujiahui']
+  },
+  {
+    id: '2', name: '2호선', color: '#8CC220',
+    stations: ['jiangsu_rd', 'jingan_temple', 'nanjing_rd_w', 'peoples_square',
+               'nanjing_rd_e', 'lujiazui', 'dongchang_rd', 'century_ave']
+  }
+];
+
+const STATIONS = {
+  // 1호선
+  shanghai_railway: { ko: '상하이역',   zh: '上海火车站', x: 380, y: 160, label: 'right' },
+  hanzhong_rd:      { ko: '한중루',     zh: '汉中路',     x: 380, y: 260, label: 'left' },
+  xinzha_rd:        { ko: '신자루',     zh: '新闸路',     x: 440, y: 320, label: 'right' },
+  peoples_square:   { ko: '인민광장',   zh: '人民广场',   x: 500, y: 380, label: 'above-right',
+    spots: [{ ko: '상하이 박물관', zh: '上海博物馆', desc: '중국 고대 유물을 볼 수 있는 대형 박물관' }] },
+  huangpi_rd_s:     { ko: '황피난루',   zh: '黄陂南路',   x: 500, y: 480, label: 'right',
+    spots: [{ ko: '신톈디', zh: '新天地', desc: '옛 석고문 건물을 살린 카페·식당 거리' }] },
+  shaanxi_rd_s:     { ko: '산시난루',   zh: '陕西南路',   x: 440, y: 540, label: 'right' },
+  changshu_rd:      { ko: '창수루',     zh: '常熟路',     x: 380, y: 600, label: 'right' },
+  hengshan_rd:      { ko: '헝산루',     zh: '衡山路',     x: 320, y: 660, label: 'right' },
+  xujiahui:         { ko: '쉬자후이',   zh: '徐家汇',     x: 260, y: 720, label: 'right' },
+
+  // 2호선
+  jiangsu_rd:       { ko: '장쑤루',     zh: '江苏路',     x: 100, y: 380, label: 'below' },
+  jingan_temple:    { ko: '징안사',     zh: '静安寺',     x: 220, y: 380, label: 'below',
+    spots: [{ ko: '징안사', zh: '静安寺', desc: '도심 한가운데 있는 금빛 불교 사원' }] },
+  nanjing_rd_w:     { ko: '난징시루',   zh: '南京西路',   x: 360, y: 380, label: 'below' },
+  nanjing_rd_e:     { ko: '난징동루',   zh: '南京东路',   x: 620, y: 380, label: 'below',
+    spots: [
+      { ko: '와이탄', zh: '外滩', desc: '황푸강변 유럽풍 건물 거리, 야경 명소' },
+      { ko: '난징동루 보행가', zh: '南京东路步行街', desc: '상하이 대표 쇼핑 거리' }
+    ] },
+  lujiazui:         { ko: '루자쭈이',   zh: '陆家嘴',     x: 740, y: 380, label: 'below',
+    spots: [
+      { ko: '동방명주', zh: '东方明珠', desc: '상하이를 대표하는 방송탑 전망대' },
+      { ko: '상하이타워', zh: '上海中心大厦', desc: '중국에서 가장 높은 빌딩 전망대' }
+    ] },
+  dongchang_rd:     { ko: '둥창루',     zh: '东昌路',     x: 860, y: 380, label: 'below' },
+  century_ave:      { ko: '스지다다오', zh: '世纪大道',   x: 980, y: 380, label: 'below' }
+};
+
+const DATA_DATE = '2026-11'; // 데이터 기준일
+
+/* =========================================================
+   준비: 역마다 지나는 노선 목록 계산
+   ========================================================= */
+for (const id in STATIONS) STATIONS[id].lines = [];
+for (const line of LINES) {
+  for (const sid of line.stations) {
+    if (!STATIONS[sid]) { console.error('없는 역 ID:', sid, '(' + line.name + ')'); continue; }
+    STATIONS[sid].lines.push(line.id);
+  }
+}
+
+/* =========================================================
+   SVG 그리기
+   ========================================================= */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) node.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+// 노선 선
+function drawLines() {
+  const layer = document.getElementById('layer-lines');
+  for (const line of LINES) {
+    const points = line.stations
+      .filter(sid => STATIONS[sid])
+      .map(sid => STATIONS[sid].x + ',' + STATIONS[sid].y)
+      .join(' ');
+    el('polyline', {
+      points, fill: 'none', stroke: line.color,
+      'stroke-width': 8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+      'data-line': line.id
+    }, layer);
+  }
+}
+
+// 역 점 (환승역은 흰 원 + 굵은 테두리)
+function drawStations() {
+  const layer = document.getElementById('layer-stations');
+  for (const id in STATIONS) {
+    const st = STATIONS[id];
+    const isTransfer = st.lines.length > 1;
+    const lineColor = (LINES.find(l => l.id === st.lines[0]) || {}).color || '#666';
+    el('circle', {
+      cx: st.x, cy: st.y,
+      r: isTransfer ? 11 : 6,
+      fill: '#fff',
+      stroke: isTransfer ? '#1f2937' : lineColor,
+      'stroke-width': isTransfer ? 4 : 3,
+      'data-station': id
+    }, layer);
+  }
+}
+
+// 역 이름 (한국어 / 중국어 두 줄)
+const LABEL_POS = {
+  right:         { dx: 14,  dy: -2,  anchor: 'start'  },
+  left:          { dx: -14, dy: -2,  anchor: 'end'    },
+  above:         { dx: 0,   dy: -30, anchor: 'middle' },
+  below:         { dx: 0,   dy: 28,  anchor: 'middle' },
+  'above-right': { dx: 14,  dy: -24, anchor: 'start'  }
+};
+function drawLabels() {
+  const layer = document.getElementById('layer-labels');
+  for (const id in STATIONS) {
+    const st = STATIONS[id];
+    const pos = LABEL_POS[st.label] || LABEL_POS.right;
+    const g = el('g', { class: 'st-label', 'data-station': id }, layer);
+    const x = st.x + pos.dx, y = st.y + pos.dy;
+    el('text', { x, y, 'text-anchor': pos.anchor, class: 'st-ko' }, g).textContent = st.ko;
+    el('text', { x, y: y + 15, 'text-anchor': pos.anchor, class: 'st-zh' }, g).textContent = st.zh;
+  }
+}
+
+// 모든 역이 들어가도록 viewBox 계산 (여백 포함)
+function fitViewBox() {
+  const xs = [], ys = [];
+  for (const id in STATIONS) { xs.push(STATIONS[id].x); ys.push(STATIONS[id].y); }
+  const pad = 80;
+  const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
+  const w = Math.max(...xs) - Math.min(...xs) + pad * 2;
+  const h = Math.max(...ys) - Math.min(...ys) + pad * 2;
+  document.getElementById('map').setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
+}
+
+// 하단 범례
+function drawLegend() {
+  const legend = document.getElementById('legend');
+  for (const line of LINES) {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<span class="legend-badge" style="background:${line.color}">${line.id}</span>${line.name}`;
+    legend.appendChild(item);
+  }
+}
+
+drawLines();
+drawStations();
+drawLabels();
+fitViewBox();
+drawLegend();
+</script>
+</body>
+</html>

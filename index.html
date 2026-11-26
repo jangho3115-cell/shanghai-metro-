@@ -5,6 +5,7 @@
 <!-- 페이지 전체 확대는 막고, 노선도 확대는 직접 구현 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1f2937">
+<meta name="color-scheme" content="light">
 <title>상하이 지하철 노선도</title>
 <style>
   /* 외부 폰트/CDN 없이 기기 기본 폰트만 사용 */
@@ -123,9 +124,62 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 5px;
-    font-size: 15px;
+    gap: 6px;
+    height: 44px;
+    padding: 0 10px 0 6px;
+    border: 2px solid transparent;
+    border-radius: 22px;
+    background: #f3f4f6;
+    color: #1f2937;
+    font-size: 16px;
     white-space: nowrap;
+  }
+  .legend-item.active { border-color: #1f2937; background: #fff; font-weight: 700; }
+
+  /* 노선 강조: 나머지는 흐리게 */
+  #viewport .dim { opacity: .12; }
+
+  #focus-chip {
+    position: absolute;
+    left: 50%; top: 12px;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    height: 44px;
+    padding: 0 14px 0 8px;
+    border: none;
+    border-radius: 22px;
+    background: #1f2937;
+    color: #fff;
+    font-size: 16px;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  #focus-chip.open { display: inline-flex; }
+  #focus-chip b { margin-left: 4px; }
+
+  /* 첫 화면 사용법 */
+  #hint {
+    position: absolute;
+    left: 16px; right: 16px; top: 16px;
+    max-width: 420px;
+    margin: 0 auto;
+    background: rgba(31,41,55,.95);
+    color: #fff;
+    border-radius: 14px;
+    padding: 16px 18px;
+    font-size: 17px;
+    line-height: 1.7;
+    box-shadow: 0 6px 20px rgba(0,0,0,.3);
+    display: none;
+  }
+  #hint.open { display: block; }
+  #hint b { color: #fcd34d; }
+  #hint-ok {
+    margin-top: 10px; width: 100%; height: 48px;
+    border: none; border-radius: 10px;
+    background: #fff; color: #1f2937; font-size: 17px; font-weight: 700;
   }
   .badge {
     display: inline-flex;
@@ -139,7 +193,7 @@
     font-size: 14px;
     white-space: nowrap;
   }
-  #data-note { flex: none; font-size: 12px; color: #9ca3af; white-space: nowrap; }
+  #data-note { flex: none; font-size: 13px; color: #6b7280; white-space: nowrap; padding-right: 8px; }
 
   /* 역 정보 창 */
   #info-sheet {
@@ -157,6 +211,24 @@
     transition: transform .25s ease;
   }
   #info-sheet.open { transform: translateY(0); }
+  #info-sheet::before { /* 위쪽 손잡이 모양 */
+    content: ''; display: block; width: 44px; height: 5px; border-radius: 3px;
+    background: #d1d5db; margin: -6px auto 12px;
+  }
+  /* 큰 화면(태블릿·PC)에서는 정보 창을 가운데 적당한 폭으로 */
+  @media (min-width: 640px) {
+    #info-sheet { left: 50%; right: auto; width: 560px; transform: translate(-50%, 105%); }
+    #info-sheet.open { transform: translate(-50%, 0); }
+  }
+  /* 가로 화면(높이가 낮을 때): 제목 숨기고 공간 확보 */
+  @media (max-height: 500px) {
+    #topbar h1 { display: none; }
+    #topbar { padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; }
+    #legend { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+    #zoom-controls { flex-direction: row; }
+    #info-sheet { max-height: 85vh; }
+    #hint { font-size: 15px; line-height: 1.5; padding: 12px 14px; }
+  }
   .sheet-head { display: flex; align-items: flex-start; gap: 8px; }
   .sheet-names { flex: 1; }
   .sheet-ko { font-size: 26px; font-weight: 800; line-height: 1.25; }
@@ -222,6 +294,15 @@
     </g>
   </svg>
 
+  <button id="focus-chip" aria-label="모든 노선 다시 보기"></button>
+
+  <div id="hint" role="note">
+    <p>✌️ 두 손가락으로 벌리면 <b>커져요</b></p>
+    <p>👆 역을 누르면 <b>관광명소</b>가 나와요</p>
+    <p>🎨 아래 노선 번호를 누르면 <b>그 노선만</b> 보여요</p>
+    <button id="hint-ok">알겠어요</button>
+  </div>
+
   <div id="zoom-controls">
     <button id="btn-zoom-in" aria-label="확대">+</button>
     <button id="btn-zoom-out" aria-label="축소">−</button>
@@ -278,7 +359,7 @@ const LINES = [
     segs: [['桂桥路','金粤路','浦东足球场','云顺路','黄杨路','蓝天路','云山路','龙居路','歇浦路','昌邑路','源深路','浦东大道','浦东南路','陆家嘴','豫园','大世界','一大会址·黄陂南路','静安寺','武定路','武宁路','曹杨路','中宁路','真如','铜川路','真光路','真新新村','定边路','嘉怡路','临洮路','乐秀路','封浜']] },
   { id: '15', name: '15호선', short: '15', color: '#BCA886',
     segs: [['紫竹高新区','永德路','元江路','双柏路','曙建路','景西路','虹梅南路','景洪路','朱梅路','罗秀路','华东理工大学','上海南站','桂林公园','桂林路','吴中路','姚虹路','红宝石路','娄山关路','长风公园','大渡河路','梅岭北路','铜川路','上海西站','武威东路','古浪路','祁安路','南大路','丰翔路','锦秋路','顾村公园']] },
-  { id: '16', name: '16호선', short: '16', color: '#32D4CB',
+  { id: '16', name: '16호선', short: '16', color: '#98D1C0',
     segs: [['滴水湖','临港大道','书院','惠南东','惠南','野生动物园','新场','航头东','鹤沙航城','周浦东','罗山路','华夏中路','龙阳路']] },
   { id: '17', name: '17호선', short: '17', color: '#BC796F',
     segs: [['虹桥火车站','国家会展中心','蟠龙路','徐盈路','徐泾北城','嘉松中路','赵巷','汇金路','青浦新城','漕盈路','淀山湖大道','朱家角','东方绿舟','西岑']] },
@@ -873,7 +954,8 @@ function drawLines() {
       el('line', {
         x1: A.x + nx * off, y1: A.y + ny * off,
         x2: B.x + nx * off, y2: B.y + ny * off,
-        stroke: LINE_BY_ID[lid].color, 'stroke-width': LINE_W, 'stroke-linecap': 'round'
+        stroke: LINE_BY_ID[lid].color, 'stroke-width': LINE_W, 'stroke-linecap': 'round',
+        'data-lines': lid
       }, layer);
     });
   }
@@ -884,10 +966,11 @@ function drawStations() {
   const layer = document.getElementById('layer-stations');
   for (const zh in STATIONS) {
     const st = STATIONS[zh];
+    const dl = st.lines.join(' ');
     if (st.transfer) {
-      el('circle', { cx: st.x, cy: st.y, r: 4 + st.lines.length * 2.5, fill: '#fff', stroke: '#1f2937', 'stroke-width': 3 }, layer);
+      el('circle', { cx: st.x, cy: st.y, r: 4 + st.lines.length * 2.5, fill: '#fff', stroke: '#1f2937', 'stroke-width': 3, 'data-lines': dl }, layer);
     } else {
-      el('circle', { cx: st.x, cy: st.y, r: 4, fill: '#fff', stroke: LINE_BY_ID[st.lines[0]].color, 'stroke-width': 2.5 }, layer);
+      el('circle', { cx: st.x, cy: st.y, r: 4, fill: '#fff', stroke: LINE_BY_ID[st.lines[0]].color, 'stroke-width': 2.5, 'data-lines': dl }, layer);
     }
   }
 }
@@ -902,42 +985,74 @@ function textWidth(str, size) {
   }
   return w * size;
 }
+// 겹침 검사용 격자 (빠르게 주변 장애물만 찾기)
+function makeGrid(cell) {
+  const map = new Map();
+  const keys = b => {
+    const out = [];
+    for (let gx = Math.floor(b.x / cell); gx <= Math.floor((b.x + b.w) / cell); gx++)
+      for (let gy = Math.floor(b.y / cell); gy <= Math.floor((b.y + b.h) / cell); gy++) out.push(gx + ',' + gy);
+    return out;
+  };
+  return {
+    add(b) { for (const k of keys(b)) { if (!map.has(k)) map.set(k, []); map.get(k).push(b); } },
+    count(b) {
+      const seen = new Set(); let n = 0;
+      for (const k of keys(b)) for (const p of map.get(k) || []) {
+        if (seen.has(p)) continue; seen.add(p);
+        if (b.x < p.x + p.w && b.x + b.w > p.x && b.y < p.y + p.h && b.y + b.h > p.y) n += p.weight;
+      }
+      return n;
+    }
+  };
+}
 function drawLabels() {
   const layer = document.getElementById('layer-labels');
-  const placed = [];
-  // 역 점도 장애물로 등록
+  const grid = makeGrid(40);
+  // 역 점은 큰 장애물, 노선 선은 작은 장애물 (가능하면 선 위에 글자가 안 올라가게)
   for (const zh in STATIONS) {
     const st = STATIONS[zh];
-    const r = st.transfer ? 4 + st.lines.length * 2.5 : 5;
-    placed.push({ x: st.x - r, y: st.y - r, w: r * 2, h: r * 2 });
+    const r = (st.transfer ? 4 + st.lines.length * 2.5 : 5) + 1;
+    grid.add({ x: st.x - r, y: st.y - r, w: r * 2, h: r * 2, weight: 20 });
   }
-  const hit = b => placed.some(p => b.x < p.x + p.w && b.x + b.w > p.x && b.y < p.y + p.h && b.y + b.h > p.y);
+  for (const seg of SEGMENTS.values()) {
+    const A = STATIONS[seg.a], B = STATIONS[seg.b];
+    const len = Math.hypot(B.x - A.x, B.y - A.y), n = Math.max(1, Math.floor(len / 8));
+    const half = 3 + seg.lines.length * LINE_W / 2;
+    for (let i = 1; i < n; i++) {
+      const x = A.x + (B.x - A.x) * i / n, y = A.y + (B.y - A.y) * i / n;
+      grid.add({ x: x - half, y: y - half, w: half * 2, h: half * 2, weight: 1 });
+    }
+  }
 
   // 환승역·명소역을 먼저 자리 잡게 함
   const list = Object.values(STATIONS).sort((a, b) => (b.major - a.major) || (b.lines.length - a.lines.length));
   for (const st of list) {
-    const ks = st.major ? 16 : 13;     // 한국어 글자 크기
-    const zs = st.major ? 12.5 : 10.5; // 중국어 글자 크기
+    const ks = st.major ? 17 : 14;     // 한국어 글자 크기
+    const zs = st.major ? 13 : 11;     // 중국어 글자 크기
     const w = Math.max(textWidth(st.ko, ks), textWidth(st.zh, zs)) + 2;
     const h = ks + zs + 3;
     const r = (st.transfer ? 4 + st.lines.length * 2.5 : 5) + 3;
     const cands = [
       [r, -h / 2], [-r - w, -h / 2], [-w / 2, -r - h], [-w / 2, r],
-      [r * 0.7, -r * 0.7 - h], [r * 0.7, r * 0.7], [-r * 0.7 - w, -r * 0.7 - h], [-r * 0.7 - w, r * 0.7]
+      [r * 0.7, -r * 0.7 - h], [r * 0.7, r * 0.7], [-r * 0.7 - w, -r * 0.7 - h], [-r * 0.7 - w, r * 0.7],
+      [r + 10, -h / 2], [-r - w - 10, -h / 2], [-w / 2, -r - h - 10], [-w / 2, r + 10]
     ];
-    let box = null;
+    // 겹침 점수가 가장 낮은 자리 선택 (글자끼리 겹침은 크게 벌점)
+    let box = null, best = Infinity;
     for (const [ox, oy] of cands) {
       const b = { x: st.x + ox, y: st.y + oy, w, h };
-      if (!hit(b)) { box = b; break; }
+      const sc = grid.count(b);
+      if (sc < best) { best = sc; box = b; if (sc === 0) break; }
     }
-    if (!box) box = { x: st.x + cands[0][0], y: st.y + cands[0][1], w, h }; // 자리가 없으면 오른쪽
-    placed.push(box);
+    box.weight = 50;
+    grid.add(box);
 
     const leftSide = box.x + w <= st.x;
     const centered = !leftSide && box.x < st.x;
     const anchor = leftSide ? 'end' : centered ? 'middle' : 'start';
     const tx = leftSide ? box.x + w : centered ? box.x + w / 2 : box.x;
-    const g = el('g', { class: 'lbl ' + (st.major ? 'lv1' : 'lv2') }, layer);
+    const g = el('g', { class: 'lbl ' + (st.major ? 'lv1' : 'lv2'), 'data-lines': st.lines.join(' ') }, layer);
     el('text', { x: tx, y: box.y + ks * 0.9, 'text-anchor': anchor, class: 'ko', 'font-size': ks }, g).textContent = st.ko;
     el('text', { x: tx, y: box.y + ks + zs * 0.95, 'text-anchor': anchor, class: 'zh', 'font-size': zs }, g).textContent = st.zh;
   }
@@ -951,7 +1066,7 @@ function drawStars() {
   for (const zh in STATIONS) {
     const st = STATIONS[zh];
     if (!st.spots.length) continue;
-    const g = el('g', {}, layer);
+    const g = el('g', { 'data-lines': st.lines.join(' ') }, layer);
     el('path', { d: STAR_PATH, transform: 'translate(-11,-11)', fill: '#f59e0b', stroke: '#fff', 'stroke-width': 1.5 }, g);
     SCALED_MARKERS.push({ node: g, x: st.x, y: st.y, minPx: 0.9 });
   }
@@ -969,7 +1084,7 @@ function drawLineBadges() {
         done.add(end);
         const A = STATIONS[end], B = STATIONS[next];
         const dx = A.x - B.x, dy = A.y - B.y, len = Math.hypot(dx, dy) || 1;
-        const g = el('g', { class: 'ln-badge' }, layer);
+        const g = el('g', { class: 'ln-badge', 'data-lines': line.id }, layer);
         const w = Math.max(22, textWidth(line.short, 13) + 12);
         // 배지는 역에서 노선 반대 방향으로 떨어뜨려 둠 (축소 배율에 맞춰 거리도 조정)
         const inner = el('g', {}, g);
@@ -985,15 +1100,44 @@ function drawLineBadges() {
 function drawLegend() {
   const legend = document.getElementById('legend');
   for (const line of LINES) {
-    const item = document.createElement('div');
+    const item = document.createElement('button');
     item.className = 'legend-item';
+    item.dataset.line = line.id;
     item.innerHTML = `<span class="badge" style="background:${line.color};color:${textColorFor(line.color)}">${line.short}</span>${line.name}`;
+    item.addEventListener('click', () => focusLine(focusedLine === line.id ? null : line.id));
     legend.appendChild(item);
   }
   const note = document.createElement('div');
   note.id = 'data-note';
   note.textContent = `데이터: OpenStreetMap 기여자 (${DATA_DATE} 기준)`;
   legend.appendChild(note);
+}
+
+/* =========================================================
+   범례를 누르면 그 노선만 진하게 보기
+   ========================================================= */
+let focusedLine = null;
+function focusLine(lid) {
+  focusedLine = lid;
+  document.querySelectorAll('#viewport [data-lines]').forEach(n => {
+    n.classList.toggle('dim', !!lid && !n.dataset.lines.split(' ').includes(lid));
+  });
+  document.querySelectorAll('.legend-item').forEach(b => b.classList.toggle('active', b.dataset.line === lid));
+  const chip = document.getElementById('focus-chip');
+  if (lid) {
+    const line = LINE_BY_ID[lid];
+    chip.innerHTML = `<span class="badge" style="background:${line.color};color:${textColorFor(line.color)}">${line.short}</span> ${line.name}만 보는 중 <b>✕</b>`;
+    chip.classList.add('open');
+    // 그 노선 전체가 보이도록 이동
+    const sts = line.segs.flat().map(z => STATIONS[z]);
+    const x0 = Math.min(...sts.map(s => s.x)) - 60, x1 = Math.max(...sts.map(s => s.x)) + 60;
+    const y0 = Math.min(...sts.map(s => s.y)) - 60, y1 = Math.max(...sts.map(s => s.y)) + 60;
+    const { w, h } = svgSize();
+    const s = Math.min(maxScale, Math.max(minScale, Math.min(w / (x1 - x0), h / (y1 - y0))));
+    animateTo({ s, tx: w / 2 - (x0 + x1) / 2 * s, ty: h / 2 - (y0 + y1) / 2 * s }, 400);
+  } else {
+    chip.classList.remove('open');
+  }
 }
 
 /* =========================================================
@@ -1020,7 +1164,7 @@ function applyView() {
     const { s, tx, ty } = view;
     viewportG.setAttribute('transform', `translate(${tx} ${ty}) scale(${s})`);
     // 축소 단계에 따라 역 이름 표시 조절
-    const z = s < 0.55 ? 'z0' : s < 0.85 ? 'z1' : 'z2';
+    const z = s < 0.6 ? 'z0' : s < 0.85 ? 'z1' : 'z2';
     if (svg.dataset.z !== z) { svg.classList.remove('z0', 'z1', 'z2'); svg.classList.add(z); svg.dataset.z = z; }
     // ★·노선 번호는 너무 작아지지 않게
     for (const m of SCALED_MARKERS) {
@@ -1307,12 +1451,36 @@ drawLabels();
 drawStars();
 drawLineBadges();
 drawLegend();
-Object.assign(view, fitAll());
+// 처음에는 시내 중심(인민광장)을 환승역 이름이 보이는 크기로
+fitAll();
+Object.assign(view, centerOn(STATIONS['人民广场'], Math.max(fitScale, 0.65)));
+view.ty += 60;
+clampView();
 applyView();
+
+document.getElementById('focus-chip').addEventListener('click', () => focusLine(null));
+
+// 첫 화면 사용법 안내 (한 번 닫으면 다음엔 안 보임)
+const hint = document.getElementById('hint');
+let hintSeen = false;
+try { hintSeen = localStorage.getItem('hintSeen') === '1'; } catch (_) {}
+if (!hintSeen) hint.classList.add('open');
+function closeHint() {
+  hint.classList.remove('open');
+  try { localStorage.setItem('hintSeen', '1'); } catch (_) {}
+}
+document.getElementById('hint-ok').addEventListener('click', closeHint);
+svg.addEventListener('pointerdown', () => { if (hint.classList.contains('open')) closeHint(); });
+// 화면 회전·크기 변경 시: 보고 있던 곳이 계속 가운데에 오도록
+let lastSize = svgSize();
 window.addEventListener('resize', () => {
+  const now = svgSize();
   const wasFit = Math.abs(view.s - fitScale) < 1e-6;
+  const mx = (lastSize.w / 2 - view.tx) / view.s, my = (lastSize.h / 2 - view.ty) / view.s;
   const f = fitAll();
   if (wasFit) Object.assign(view, f);
+  else { view.tx = now.w / 2 - mx * view.s; view.ty = now.h / 2 - my * view.s; }
+  lastSize = now;
   clampView(); applyView();
 });
 </script>

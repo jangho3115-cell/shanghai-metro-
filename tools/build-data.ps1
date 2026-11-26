@@ -1,4 +1,4 @@
-﻿# 노선 데이터(osm-routes.json) + 한국어 이름(ko.tsv) + template.html → ../index.html 생성
+﻿# 노선 데이터(osm-routes.json) + 한국어 이름(ko.tsv) + template.html → ../shanghai_metro.html 생성
 # 실행: powershell -File tools\build-data.ps1
 param([double]$C = 6, [double]$Scale = 100)
 $ErrorActionPreference = 'Stop'
@@ -102,5 +102,5 @@ foreach ($nm in $order) {
 [void]$sb.AppendLine('};')
 $u = New-Object System.Text.UTF8Encoding $false
 $tpl = [IO.File]::ReadAllText("$d\template.html", $u)
-[IO.File]::WriteAllText((Join-Path (Split-Path $d) 'index.html'), $tpl.Replace('/*__DATA__*/', $sb.ToString().TrimEnd()), $u)
+[IO.File]::WriteAllText((Join-Path (Split-Path $d) 'shanghai_metro.html'), $tpl.Replace('/*__DATA__*/', $sb.ToString().TrimEnd()), $u)
 "stations: $($order.Count); missing ko: $($missing -join ',')"
